@@ -17,7 +17,7 @@ class Aphids(object):
 
     def __init__(self):
         self.map_path = os.getcwd()
-        self.container_image = 'ghcr.io/darksidesecurity.io/aphids:latest'
+        self.container_image = 'ghcr.io/darksidesecurity/aphids:latest'
         self.options = None
         self.config = None
         self.tool_output = None
