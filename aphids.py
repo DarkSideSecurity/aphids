@@ -4,7 +4,7 @@ import argparse, sys, yaml
 import subprocess
 import os
 import json
-
+from urllib.parse import urlparse
 
 G = '\033[92m'  # green
 Y = '\033[93m'  # yellow
@@ -22,6 +22,7 @@ class Aphids(object):
         self.config = None
         self.tool_output = None
         self.debug = False
+        self.runbook = None
 
     def banner(self):
         print(f"""
@@ -31,7 +32,7 @@ class Aphids(object):
 |               {G}Aphids CLI{W}                 |
 |__________________________________________|
                 
-                version {R}1.1.0{W}
+                version {R}1.2.0{W}
                         
     """)
 
@@ -53,8 +54,16 @@ class Aphids(object):
             description='')
         parser.error = self.parser_error
         parser._optionals.title = "OPTIONS"
-        parser.add_argument('-o', '--options', help="Options file path (See Sample options.yaml)", required=True, type=argparse.FileType('r'), metavar="options.yaml")
+        parser.add_argument('-o', '--options', help="Options file path (See Sample options.yaml)", required=False, type=argparse.FileType('r'), metavar="options.yaml")
         parser.add_argument('-c', '--config', help='Configuration file path (See Sample config.yaml)', required=False,nargs='?', type=argparse.FileType('r'), metavar="config.yaml")
+        parser.add_argument('-r', '--runbook', help="Runbook ID for retrieving and populating options. Requires an API Key (-k) and a 'target' argument --target_url|target_host|target_domain")
+        parser.add_argument('--target-url', help="Target URL for runbook. Should be in Full URL format. Example: https://www.darksidesecurity.io")
+        parser.add_argument('--target-host', help="Target HOST for runbook. Should be in FQDN, IP, or CIDR depending on tool/target requirements.")
+        parser.add_argument('--target-domain', help="Target DOMAIN for runbook. Should be a resolvable domain, often used for subdomain enumeration.")
+        parser.add_argument('-k', '--api-key', help="API Key for interacting with Valis or Continuity")
+        parser.add_argument('-u', '--api-url', help="Hive API Url", default="https://api.hive.darksidsecurity.io/valis/")
+        parser.add_argument('-e', '--engagement', help="Engagement ID from Hive UI")   
+        parser.add_argument('-n', '--network', help="Specify a network name or domain to prevent dns/ip collisions (use when testing non public internet. Example: domain.local)", default="public")   
         parser.add_argument('-sp', '--static-path', help='A relative or absolute path for running scans on a local directory, this will become the working directory.', metavar='/DevCode/MyApplication/')
         parser.add_argument('-v', '--verbose', help='Enable verbose mode to see module execution in real time.', nargs='?', default=False)
         parser.add_argument('-t', '--tool-output', help='Write individual tool output to working directory.', nargs='?', default=True)
@@ -64,8 +73,50 @@ class Aphids(object):
 
     def run(self):
         args = self.parse_args()
-        self.options = yaml.safe_load(args.options)
-        self.config = yaml.safe_load(args.config)
+        if args.options:
+            self.options = yaml.safe_load(args.options)
+        elif args.runbook:
+            self.runbook = args.runbook
+            self.options = {
+                "runbookId": args.runbook,
+                "configuration": {
+                    "online": "enabled",
+                    "network": "public"
+                }
+            }
+            if args.network:
+                self.options["configuration"]["network"] = args.network
+            if args.engagement:
+                self.options["configuration"]["engagement"] = args.engagement
+            if args.target_url:
+                self.options["targets"] = {}
+                self.options["targets"]["target_url"] = args.target_url
+            if args.target_host:
+                self.options["targets"] = {}
+                self.options["targets"]["target_host"] = args.target_host
+            if args.target_domain:
+                self.options["targets"] = {}
+                self.options["targets"]["target_domain"] = args.target_domain
+            
+
+        if args.config:
+            self.config = yaml.safe_load(args.config)
+        elif args.api_key:
+            uri = urlparse(args.api_url)
+            self.config = {
+                "authorization": {
+                    "apiKey": args.api_key
+                },
+                "baseUrl": uri._replace(path="").geturl(),
+                "endpoints":{
+                    "valis": {
+                        "path": "/valis/"
+                    },
+                    "continuity":{
+                        "path": "/continuity/"
+                    }
+                }
+            }
         if args.static_path:
             self.map_path = args.static_path
         if args.image:
@@ -89,12 +140,14 @@ class Aphids(object):
         map_path = f'{self.map_path}:/output/'
         docker_cmd += f' -v {map_path} {self.container_image}'
         docker_cmd = docker_cmd.split(' ')
-        docker_cmd.append('-jo')
-        jo = json.dumps(self.options)
-        docker_cmd.append(jo)
-        docker_cmd.append('-jc')
-        jc = json.dumps(self.config)
-        docker_cmd.append(jc)
+        if self.options is not None:
+            docker_cmd.append('-jo')
+            jo = json.dumps(self.options)
+            docker_cmd.append(jo)
+        if self.config is not None:
+            docker_cmd.append('-jc')
+            jc = json.dumps(self.config)
+            docker_cmd.append(jc)
         print(f'{W}Running container: {G}{self.container_image}{W}')
         raw = ''
         process = subprocess.Popen(docker_cmd, stdout=subprocess.PIPE)
