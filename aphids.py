@@ -56,23 +56,27 @@ class Aphids(object):
         parser._optionals.title = "OPTIONS"
         parser.add_argument('-o', '--options', help="Options file path (See Sample options.yaml)", required=False, type=argparse.FileType('r'), metavar="options.yaml")
         parser.add_argument('-c', '--config', help='Configuration file path (See Sample config.yaml)', required=False,nargs='?', type=argparse.FileType('r'), metavar="config.yaml")
-        parser.add_argument('-r', '--runbook', help="Runbook ID for retrieving and populating options. Requires an API Key (-k) and a 'target' argument --target_url|target_host|target_domain")
-        parser.add_argument('--target-url', help="Target URL for runbook. Should be in Full URL format. Example: https://www.darksidesecurity.io")
-        parser.add_argument('--target-host', help="Target HOST for runbook. Should be in FQDN, IP, or CIDR depending on tool/target requirements.")
-        parser.add_argument('--target-domain', help="Target DOMAIN for runbook. Should be a resolvable domain, often used for subdomain enumeration.")
-        parser.add_argument('-k', '--api-key', help="API Key for interacting with Valis or Continuity")
-        parser.add_argument('-u', '--api-url', help="Hive API Url", default="https://api.hive.darksidsecurity.io/valis/")
-        parser.add_argument('-e', '--engagement', help="Engagement ID from Hive UI")   
-        parser.add_argument('-n', '--network', help="Specify a network name or domain to prevent dns/ip collisions (use when testing non public internet. Example: domain.local)", default="public")   
+        parser.add_argument('-r', '--runbook', help="[Online Mode Only] Runbook ID for retrieving and populating options. Requires an API Key (-k) and a 'target' argument --target-url|target-host|target-domain")
+        parser.add_argument('-at', '--attack-tree', help="[Online Mode Only] Attack Tree ID for retrieving and populating options. Requires an API Key (-k) and a 'target' argument --target-url|target-host|target-domain")
+        parser.add_argument('-ats', '--attack-tree-scope', help="[Online Mode Only] Scope restrictions for attack tree. Currently Supported types are [IP Address, IP CIDR, DOMAIN, DOMAIN with WILDCARD] Ex: *.domain.com, sub.domain.com, 127.0.0.1, 127.0.0.1/21")
+        parser.add_argument('--target-url', help="[Online Mode Only] Target URL for runbook. Should be in Full URL format. Example: https://www.darksidesecurity.io")
+        parser.add_argument('--target-host', help="[Online Mode Only] Target HOST for runbook. Should be in FQDN, IP, or CIDR depending on tool/target requirements.")
+        parser.add_argument('--target-domain', help="[Online Mode Only] Target DOMAIN for runbook. Should be a resolvable domain, often used for subdomain enumeration.")
+        parser.add_argument('-k', '--api-key', help="[Online Mode Only] API Key for interacting with Valis or Continuity")
+        parser.add_argument('-u', '--api-url', help="[Online Mode Only] Hive API Url", default="https://api.hive.darksidsecurity.io")
+        parser.add_argument('-uw', '--wsapi-url', help="[Online Mode Only] Hive WS API Url", default="wss://ws.continuity.hive.darksidsecurity.io")
+        parser.add_argument('-e', '--engagement', help="[Online Mode Only] Engagement ID from Hive UI")   
+        parser.add_argument('-n', '--network', help="[Online Mode Only] Specify a network name or domain to prevent dns/ip collisions (use when testing non public internet. Example: domain.local)", default="public")   
         parser.add_argument('-sp', '--static-path', help='A relative or absolute path for running scans on a local directory, this will become the working directory.', metavar='/DevCode/MyApplication/')
         parser.add_argument('-v', '--verbose', help='Enable verbose mode to see module execution in real time.', nargs='?', default=False)
         parser.add_argument('-t', '--tool-output', help='Write individual tool output to working directory.', nargs='?', default=True)
         parser.add_argument('-d', '--debug', help='Debug mode.', nargs='?', default=False)
-        parser.add_argument('-i', '--image', help='Custom Container Name')
-        return parser.parse_args()
+        parser.add_argument('-i', '--image', help='Custom Container Name for custom built Aphids Core images or testing purposes.')
+        return parser
 
     def run(self):
-        args = self.parse_args()
+        parser = self.parse_args()
+        args = parser.parse_args()
         if args.options:
             self.options = yaml.safe_load(args.options)
         elif args.runbook:
@@ -84,19 +88,33 @@ class Aphids(object):
                     "network": "public"
                 }
             }
-            if args.network:
-                self.options["configuration"]["network"] = args.network
-            if args.engagement:
-                self.options["configuration"]["engagement"] = args.engagement
-            if args.target_url:
-                self.options["targets"] = {}
-                self.options["targets"]["target_url"] = args.target_url
-            if args.target_host:
-                self.options["targets"] = {}
-                self.options["targets"]["target_host"] = args.target_host
-            if args.target_domain:
-                self.options["targets"] = {}
-                self.options["targets"]["target_domain"] = args.target_domain
+        elif args.attack_tree:
+            self.options = {
+                "attackTreeId": args.attack_tree,
+                "configuration":{
+                    "online": "enabled",
+                    "network": "public"
+                }
+            }
+        else:
+            print('**** Missing Required options|runbook|attackTree ****')
+            parser.print_help()
+            exit(0)
+        if args.attack_tree_scope:
+            self.options["attackTreeScope"] = args.attack_tree_scope
+        if args.network and self.options["configuration"]:
+            self.options["configuration"]["network"] = args.network
+        if args.engagement and self.options["configuration"]:
+            self.options["configuration"]["engagement"] = args.engagement
+        if args.target_url:
+            self.options["targets"] = {}
+            self.options["targets"]["target_url"] = args.target_url
+        if args.target_host:
+            self.options["targets"] = {}
+            self.options["targets"]["target_host"] = args.target_host
+        if args.target_domain:
+            self.options["targets"] = {}
+            self.options["targets"]["target_domain"] = args.target_domain
             
 
         if args.config:
@@ -117,6 +135,8 @@ class Aphids(object):
                     }
                 }
             }
+        if args.wsapi_url:
+            self.config["baseWsUrl"] = args.wsapi_url
         if args.static_path:
             self.map_path = args.static_path
         if args.image:
@@ -148,6 +168,7 @@ class Aphids(object):
             docker_cmd.append('-jc')
             jc = json.dumps(self.config)
             docker_cmd.append(jc)
+        # print(docker_cmd)
         print(f'{W}Running container: {G}{self.container_image}{W}')
         raw = ''
         process = subprocess.Popen(docker_cmd, stdout=subprocess.PIPE)

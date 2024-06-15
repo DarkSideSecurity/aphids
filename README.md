@@ -17,7 +17,7 @@ For full APHIDS documentation on the core docker container please see [APHIDS Do
 
 * Aphids CLI (This repo)
 * Aphids Core Docker Container
-* Input Files
+* Input Files - Required Offline
   * config.yaml
   * options.yaml
 * Host with Docker running
@@ -45,16 +45,17 @@ Make sure you have docker running, the container pulled down, and the app instal
 > ``` aphids-cli -o options.yaml -c config.yaml```
 
 ## Help ##
-```
+```      
  __________________________________________
 |                                          |
 |               Aphids CLI                 |
 |__________________________________________|
                 
-                version 1.0
+                version 1.2.0
                         
-    
-usage: aphids-cli.py [-h] -o options.yaml [-c [config.yaml]] [-sp /DevCode/MyApplication/] [-v [VERBOSE]] [-t [TOOL_OUTPUT]] [-d [DEBUG]] [-i IMAGE]
+
+usage: aphids.py [-h] [-o options.yaml] [-c [config.yaml]] [-r RUNBOOK] [-at ATTACK_TREE] [-ats ATTACK_TREE_SCOPE] [--target-url TARGET_URL] [--target-host TARGET_HOST] [--target-domain TARGET_DOMAIN]
+                 [-k API_KEY] [-u API_URL] [-uw WSAPI_URL] [-e ENGAGEMENT] [-n NETWORK] [-sp /DevCode/MyApplication/] [-v [VERBOSE]] [-t [TOOL_OUTPUT]] [-d [DEBUG]] [-i IMAGE]
 
 OPTIONS:
   -h, --help            show this help message and exit
@@ -62,6 +63,29 @@ OPTIONS:
                         Options file path (See Sample options.yaml)
   -c [config.yaml], --config [config.yaml]
                         Configuration file path (See Sample config.yaml)
+  -r RUNBOOK, --runbook RUNBOOK
+                        [Online Mode Only] Runbook ID for retrieving and populating options. Requires an API Key (-k) and a 'target' argument --target-url|target-host|target-domain
+  -at ATTACK_TREE, --attack-tree ATTACK_TREE
+                        [Online Mode Only] Attack Tree ID for retrieving and populating options. Requires an API Key (-k) and a 'target' argument --target-url|target-host|target-domain
+  -ats ATTACK_TREE_SCOPE, --attack-tree-scope ATTACK_TREE_SCOPE
+                        [Online Mode Only] Scope restrictions for attack tree. Currently Supported types are [IP Address, IP CIDR, DOMAIN, DOMAIN with WILDCARD] Ex: *.domain.com, sub.domain.com, 127.0.0.1,
+                        127.0.0.1/21
+  --target-url TARGET_URL
+                        [Online Mode Only] Target URL for runbook. Should be in Full URL format. Example: https://www.darksidesecurity.io
+  --target-host TARGET_HOST
+                        [Online Mode Only] Target HOST for runbook. Should be in FQDN, IP, or CIDR depending on tool/target requirements.
+  --target-domain TARGET_DOMAIN
+                        [Online Mode Only] Target DOMAIN for runbook. Should be a resolvable domain, often used for subdomain enumeration.
+  -k API_KEY, --api-key API_KEY
+                        [Online Mode Only] API Key for interacting with Valis or Continuity
+  -u API_URL, --api-url API_URL
+                        [Online Mode Only] Hive API Url
+  -uw WSAPI_URL, --wsapi-url WSAPI_URL
+                        [Online Mode Only] Hive WS API Url
+  -e ENGAGEMENT, --engagement ENGAGEMENT
+                        [Online Mode Only] Engagement ID from Hive UI
+  -n NETWORK, --network NETWORK
+                        [Online Mode Only] Specify a network name or domain to prevent dns/ip collisions (use when testing non public internet. Example: domain.local)
   -sp /DevCode/MyApplication/, --static-path /DevCode/MyApplication/
                         A relative or absolute path for running scans on a local directory, this will become the working directory.
   -v [VERBOSE], --verbose [VERBOSE]
@@ -71,9 +95,9 @@ OPTIONS:
   -d [DEBUG], --debug [DEBUG]
                         Debug mode.
   -i IMAGE, --image IMAGE
-                        Custom Container Name
+                        Custom Container Name for custom built Aphids Core images or testing purposes.
 
-Example: python aphids-cli.py -o options.yaml -c config.yaml
+Example: python aphids.py -o options.yaml -c config.yaml
 ```
 
 ## Arguments ##

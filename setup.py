@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name='aphids-cli',
-    version='1.1.0',
+    version='1.2.0',
     author='Evan Magrann',
     author_email='admin@darksidesecurity.io',
     packages=find_packages()+['.'],
