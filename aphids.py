@@ -32,7 +32,7 @@ class Aphids(object):
 |               {G}Aphids CLI{W}                 |
 |__________________________________________|
                 
-                version {R}1.2.0{W}
+                version {R}1.2.1{W}
                         
     """)
 
@@ -106,14 +106,13 @@ class Aphids(object):
             self.options["configuration"]["network"] = args.network
         if args.engagement and self.options["configuration"]:
             self.options["configuration"]["engagement"] = args.engagement
-        if args.target_url:
+        if args.target_url or args.target_host or args.target_domain:
             self.options["targets"] = {}
+        if args.target_url:
             self.options["targets"]["target_url"] = args.target_url
         if args.target_host:
-            self.options["targets"] = {}
             self.options["targets"]["target_host"] = args.target_host
         if args.target_domain:
-            self.options["targets"] = {}
             self.options["targets"]["target_domain"] = args.target_domain
             
 
@@ -156,7 +155,7 @@ class Aphids(object):
         pass
 
     def build_run_docker(self):
-        docker_cmd = 'docker run -it'
+        docker_cmd = 'docker run --rm -it'
         map_path = f'{self.map_path}:/output/'
         docker_cmd += f' -v {map_path} {self.container_image}'
         docker_cmd = docker_cmd.split(' ')
