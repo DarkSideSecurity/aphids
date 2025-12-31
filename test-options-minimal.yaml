@@ -1,0 +1,10 @@
+configuration:
+  online: disabled
+  scan_group: test-debug-mode
+  team: users
+  network: public
+modules:
+  whatweb-test:
+    module: 'whatweb'
+    target: 'https://www.darksidesecurity.io'
+    args: ['-a','1']

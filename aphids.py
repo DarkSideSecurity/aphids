@@ -32,7 +32,7 @@ class Aphids(object):
 |               {G}Aphids CLI{W}                 |
 |__________________________________________|
                 
-                version {R}1.2.1{W}
+                version {R}1.2.3{W}
                         
     """)
 
@@ -58,6 +58,7 @@ class Aphids(object):
         parser.add_argument('-c', '--config', help='Configuration file path (See Sample config.yaml)', required=False,nargs='?', type=argparse.FileType('r'), metavar="config.yaml")
         parser.add_argument('-r', '--runbook', help="[Online Mode Only] Runbook ID for retrieving and populating options. Requires an API Key (-k) and a 'target' argument --target-url|target-host|target-domain")
         parser.add_argument('-at', '--attack-tree', help="[Online Mode Only] Attack Tree ID for retrieving and populating options. Requires an API Key (-k) and a 'target' argument --target-url|target-host|target-domain")
+        parser.add_argument('-se', '--scan-execution', help="[Online Mode Only] Scan Execution ID for retrieving pre-configured execution parameters. Requires an API Key (-k). Overrides -r and -at arguments.")
         parser.add_argument('-ats', '--attack-tree-scope', help="[Online Mode Only] Scope restrictions for attack tree. Currently Supported types are [IP Address, IP CIDR, DOMAIN, DOMAIN with WILDCARD] Ex: *.domain.com, sub.domain.com, 127.0.0.1, 127.0.0.1/21")
         parser.add_argument('--target-url', help="[Online Mode Only] Target URL for runbook. Should be in Full URL format. Example: https://www.darksidesecurity.io")
         parser.add_argument('--target-host', help="[Online Mode Only] Target HOST for runbook. Should be in FQDN, IP, or CIDR depending on tool/target requirements.")
@@ -79,6 +80,15 @@ class Aphids(object):
         args = parser.parse_args()
         if args.options:
             self.options = yaml.safe_load(args.options)
+        elif args.scan_execution:
+            # Scan execution takes priority - it contains all execution parameters
+            self.options = {
+                "scanExecutionId": args.scan_execution,
+                "configuration": {
+                    "online": "enabled",
+                    "network": "public"
+                }
+            }
         elif args.runbook:
             self.runbook = args.runbook
             self.options = {
@@ -97,7 +107,7 @@ class Aphids(object):
                 }
             }
         else:
-            print('**** Missing Required options|runbook|attackTree ****')
+            print('**** Missing Required options|runbook|attackTree|scan-execution ****')
             parser.print_help()
             exit(0)
         if args.attack_tree_scope:
@@ -132,7 +142,8 @@ class Aphids(object):
                     "continuity":{
                         "path": "/continuity/"
                     }
-                }
+                },
+                "debug": args.debug if args.debug else False
             }
         if args.wsapi_url:
             self.config["baseWsUrl"] = args.wsapi_url
@@ -169,18 +180,9 @@ class Aphids(object):
             docker_cmd.append(jc)
         # print(docker_cmd)
         print(f'{W}Running container: {G}{self.container_image}{W}')
-        raw = ''
-        process = subprocess.Popen(docker_cmd, stdout=subprocess.PIPE)
-        while True:
-            output = process.stdout.readline()
-            formatted_output = str(output.strip(), 'UTF-8')
-            if formatted_output == '' and process.poll() is not None:
-                break
-            if output:
-                raw += formatted_output
-                print(f'\r{formatted_output}')
-        rc = process.poll()
-        return raw
+        # Don't capture stdout/stdin - let Docker handle TTY directly
+        process = subprocess.run(docker_cmd)
+        return process.returncode
 
 
 def cli():
