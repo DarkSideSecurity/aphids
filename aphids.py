@@ -32,7 +32,7 @@ class Aphids(object):
 |               {G}Aphids CLI{W}                 |
 |__________________________________________|
                 
-                version {R}1.2.4{W}
+                version {R}1.2.5{W}
                         
     """)
 
@@ -63,6 +63,7 @@ class Aphids(object):
         parser.add_argument('--target-url', help="[Online Mode Only] Target URL for runbook. Should be in Full URL format. Example: https://www.darksidesecurity.io")
         parser.add_argument('--target-host', help="[Online Mode Only] Target HOST for runbook. Should be in FQDN, IP, or CIDR depending on tool/target requirements.")
         parser.add_argument('--target-domain', help="[Online Mode Only] Target DOMAIN for runbook. Should be a resolvable domain, often used for subdomain enumeration.")
+        parser.add_argument('--target-dir', help="[Online Mode Only] Target directory for runbook. Should be a relative path to a directory containing the target files, or simply '.' for the current directory.")
         parser.add_argument('-k', '--api-key', help="[Online Mode Only] API Key for interacting with Valis or Continuity")
         parser.add_argument('-u', '--api-url', help="[Online Mode Only] Hive API Url", default="https://api.hive.darksidsecurity.io")
         parser.add_argument('-uw', '--wsapi-url', help="[Online Mode Only] Hive WS API Url", default="wss://ws.continuity.hive.darksidsecurity.io")
