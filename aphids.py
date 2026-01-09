@@ -68,7 +68,7 @@ class Aphids(object):
         parser.add_argument('-uw', '--wsapi-url', help="[Online Mode Only] Hive WS API Url", default="wss://ws.continuity.hive.darksidsecurity.io")
         parser.add_argument('-e', '--engagement', help="[Online Mode Only] Engagement ID from Hive UI")   
         parser.add_argument('-n', '--network', help="[Online Mode Only] Specify a network name or domain to prevent dns/ip collisions (use when testing non public internet. Example: domain.local)", default="public")   
-        parser.add_argument('-sp', '--static-path', '--target-dir', dest='static_path', help='A relative or absolute path for running scans on a local directory, this will become the working directory.', metavar='/DevCode/MyApplication/')
+        parser.add_argument('-sp', '--static-path', dest='static_path', help='A relative or absolute path for running scans on a local directory, this will become the working directory.', metavar='/DevCode/MyApplication/')
         parser.add_argument('-v', '--verbose', help='Enable verbose mode to see module execution in real time.', nargs='?', default=False)
         parser.add_argument('-t', '--tool-output', help='Write individual tool output to working directory.', nargs='?', default=True)
         parser.add_argument('-d', '--debug', help='Debug mode.', nargs='?', default=False)
@@ -124,6 +124,8 @@ class Aphids(object):
             self.options["targets"]["target_host"] = args.target_host
         if args.target_domain:
             self.options["targets"]["target_domain"] = args.target_domain
+        if args.target_dir:
+            self.options["targets"]["target_dir"] = args.target_dir
             
 
         if args.config:
