@@ -32,7 +32,7 @@ class Aphids(object):
 |               {G}Aphids CLI{W}                 |
 |__________________________________________|
                 
-                version {R}1.2.3{W}
+                version {R}1.2.4{W}
                         
     """)
 
