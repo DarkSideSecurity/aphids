@@ -23,6 +23,7 @@ class Aphids(object):
         self.tool_output = None
         self.debug = False
         self.runbook = None
+        self.unattended = False
 
     def banner(self):
         print(f"""
@@ -74,6 +75,8 @@ class Aphids(object):
         parser.add_argument('-t', '--tool-output', help='Write individual tool output to working directory.', nargs='?', default=True)
         parser.add_argument('-d', '--debug', help='Debug mode.', nargs='?', default=False)
         parser.add_argument('-i', '--image', help='Custom Container Name for custom built Aphids Core images or testing purposes.')
+        parser.add_argument('--unattended', action='store_true', 
+            help='CAUTION: Unattended mode - auto-approves all prompts. A user MUST be present to monitor and stop the scan if incorrect targets or arguments are specified.')
         return parser
 
     def run(self):
@@ -155,6 +158,7 @@ class Aphids(object):
         if args.image:
             self.container_image = args.image
         self.debug = args.debug
+        self.unattended = args.unattended
         self.disclaimer()
         self.build_run_docker()
         print(f'\r\n{R}Goodbye.{W}')
@@ -181,6 +185,8 @@ class Aphids(object):
             docker_cmd.append('-jc')
             jc = json.dumps(self.config)
             docker_cmd.append(jc)
+        if self.unattended:
+            docker_cmd.append('--unattended')
         # print(docker_cmd)
         print(f'{W}Running container: {G}{self.container_image}{W}')
         # Don't capture stdout/stdin - let Docker handle TTY directly
