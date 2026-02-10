@@ -1,0 +1,10 @@
+LICENSE
+README.md
+aphids.py
+setup.py
+aphids_cli.egg-info/PKG-INFO
+aphids_cli.egg-info/SOURCES.txt
+aphids_cli.egg-info/dependency_links.txt
+aphids_cli.egg-info/entry_points.txt
+aphids_cli.egg-info/requires.txt
+aphids_cli.egg-info/top_level.txt

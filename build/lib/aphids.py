@@ -232,12 +232,8 @@ class Aphids(object):
         # print(docker_cmd)
         print(f'{W}Running container: {G}{self.container_image}{W}')
         # Don't capture stdout/stdin - let Docker handle TTY directly
-        try:
-            process = subprocess.run(docker_cmd)
-            return process.returncode
-        except KeyboardInterrupt:
-            print(f'\n{W}Goodbye.{W}')
-            return 130
+        process = subprocess.run(docker_cmd)
+        return process.returncode
 
 
 def cli():

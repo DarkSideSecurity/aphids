@@ -1,0 +1,2 @@
+[console_scripts]
+aphids-cli = aphids:cli
