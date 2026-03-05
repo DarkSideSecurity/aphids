@@ -1,0 +1,13 @@
+include LICENSE
+include README.md
+include pyproject.toml
+
+recursive-include tests *.py *.yaml
+
+exclude setup.py
+exclude requirements.txt
+
+recursive-exclude build *
+recursive-exclude dist *
+recursive-exclude __pycache__ *
+recursive-exclude *.egg-info *

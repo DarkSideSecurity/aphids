@@ -4,7 +4,13 @@ import argparse, sys, yaml
 import subprocess
 import os
 import json
+from importlib.metadata import version as _pkg_version
 from urllib.parse import urlparse
+
+try:
+    __version__ = _pkg_version("aphids-cli")
+except Exception:
+    __version__ = "dev"
 
 G = '\033[92m'  # green
 Y = '\033[93m'  # yellow
@@ -29,6 +35,9 @@ class Aphids(object):
         self.exit_on_idle = 0
         self.ws_url = None
         self.resume_id = None
+        self.fail_on_severity = None
+        self.fail_on_count = None
+        self.sarif_output = None
 
     def banner(self):
         print(f"""
@@ -38,7 +47,7 @@ class Aphids(object):
 |               {G}Aphids CLI{W}                 |
 |__________________________________________|
                 
-                version {R}1.3.0{W}
+                version {R}{__version__}{W}
                         
     """)
 
@@ -80,6 +89,12 @@ class Aphids(object):
         parser.add_argument('-t', '--tool-output', help='Write individual tool output to working directory.', nargs='?', default=True)
         parser.add_argument('-d', '--debug', help='Debug mode.', nargs='?', default=False)
         parser.add_argument('-i', '--image', help='Custom Container Name for custom built Aphids Core images or testing purposes.')
+        parser.add_argument('--runtime', dest='runtime', default=None,
+            choices=['docker', 'podman', 'nerdctl'],
+            help='Container runtime to use (default: auto-detect). Can also be set via APHIDS_CONTAINER_RUNTIME env var.')
+        parser.add_argument('--mcp', action='store_true', help='Start as MCP server for AI agent integration. Dispatches tools to containers via the selected runtime.')
+        parser.add_argument('--mcp-workspace', dest='mcp_workspace', help='Workspace directory for MCP mode static analysis tools (default: current directory).', default=None)
+        parser.add_argument('--mcp-refresh', dest='mcp_refresh', action='store_true', help='Force refresh of cached tool registry in MCP mode.')
         parser.add_argument('--unattended', action='store_true', 
             help='CAUTION: Unattended mode - auto-approves all prompts. A user MUST be present to monitor and stop the scan if incorrect targets or arguments are specified.')
         parser.add_argument('--agent', action='store_true',
@@ -92,11 +107,23 @@ class Aphids(object):
             help='WebSocket URL override for agent mode (must be wss://). Defaults to config baseWsUrl.')
         parser.add_argument('--resume', dest='resume_id', default=None,
             help='Resume a previously paused/interrupted scan by its group ID or execution ID.')
+        parser.add_argument('--fail-on-severity', dest='fail_on_severity', default=None,
+            help='Exit with code 3 if findings at or above this severity are found. '
+                 'Values: critical, high, medium, low, info. Example: --fail-on-severity high')
+        parser.add_argument('--fail-on-count', dest='fail_on_count', type=int, default=None,
+            help='Exit with code 3 if total findings exceed this count. Example: --fail-on-count 10')
+        parser.add_argument('--sarif', dest='sarif_output', default=None, metavar='FILE',
+            help='Write SARIF v2.1.0 output to FILE after scan. Path is relative to output directory. '
+                 'Example: --sarif results.sarif')
         return parser
 
     def run(self):
         parser = self.parse_args()
         args = parser.parse_args()
+        # Handle MCP server mode — runs natively on host, dispatches to Docker
+        if args.mcp:
+            self._run_mcp_mode(args)
+            return
         # Handle agent mode — no options required
         if args.agent:
             self.agent_mode = True
@@ -147,7 +174,7 @@ class Aphids(object):
                 self.options["configuration"]["network"] = args.network
             if args.engagement and self.options.get("configuration"):
                 self.options["configuration"]["engagement"] = args.engagement
-            if args.target_url or args.target_host or args.target_domain:
+            if args.target_url or args.target_host or args.target_domain or args.target_dir:
                 self.options["targets"] = {}
             if args.target_url:
                 self.options["targets"]["target_url"] = args.target_url
@@ -189,51 +216,101 @@ class Aphids(object):
         self.unattended = args.unattended
         if args.resume_id:
             self.resume_id = args.resume_id
+        if args.fail_on_severity:
+            self.fail_on_severity = args.fail_on_severity
+        if args.fail_on_count is not None:
+            self.fail_on_count = args.fail_on_count
+        if args.sarif_output:
+            self.sarif_output = args.sarif_output
         self.disclaimer()
-        self.build_run_docker()
+        rc = self.build_run_container(runtime_name=args.runtime if hasattr(args, 'runtime') else None)
         print(f'\r\n{R}Goodbye.{W}')
-        exit(0)
+        exit(rc if rc else 0)
     
-    def check_docker(self):
-        # if docker version then return true else false        
-        pass
-    
+    def _run_mcp_mode(self, args):
+        """Start the MCP server shim that dispatches tools to containers."""
+        import asyncio
+        from mcp_shim import run_mcp_server
+
+        container_image = args.image if args.image else self.container_image
+        workspace_dir = os.path.abspath(args.mcp_workspace or os.getcwd())
+        api_key = args.api_key if hasattr(args, 'api_key') and args.api_key else os.environ.get('APHIDS_API_KEY')
+        api_url = args.api_url if hasattr(args, 'api_url') and args.api_url else os.environ.get('APHIDS_API_URL')
+        ws_url = args.wsapi_url if hasattr(args, 'wsapi_url') and args.wsapi_url else os.environ.get('APHIDS_WS_URL')
+        refresh = args.mcp_refresh if hasattr(args, 'mcp_refresh') else False
+        runtime_name = args.runtime if hasattr(args, 'runtime') else None
+
+        try:
+            asyncio.run(run_mcp_server(
+                container_image=container_image,
+                workspace_dir=workspace_dir,
+                api_key=api_key,
+                api_url=api_url,
+                ws_url=ws_url,
+                refresh_tools=refresh,
+                runtime_name=runtime_name,
+            ))
+        except KeyboardInterrupt:
+            print(f'\n{W}MCP server stopped.{W}')
+        except Exception as ex:
+            print(f'{R}MCP server error: {ex}{W}')
+            sys.exit(1)
+
     def check_container(self):
         # get container list - if self.container_image in list: return true, else return false.
         pass
 
-    def build_run_docker(self):
-        docker_cmd = 'docker run --rm -it'
-        map_path = f'{self.map_path}:/output/'
-        docker_cmd += f' -v {map_path} {self.container_image}'
-        docker_cmd = docker_cmd.split(' ')
-        if self.agent_mode:
-            docker_cmd.append('--agent')
-            if self.agent_name:
-                docker_cmd.extend(['--agent-name', self.agent_name])
-            if self.exit_on_idle:
-                docker_cmd.extend(['--exit-on-idle', str(self.exit_on_idle)])
-            if self.ws_url:
-                docker_cmd.extend(['--ws-url', self.ws_url])
-            if self.debug:
-                docker_cmd.append('--debug')
-        if self.options is not None:
-            docker_cmd.append('-jo')
-            jo = json.dumps(self.options)
-            docker_cmd.append(jo)
-        if self.config is not None:
-            docker_cmd.append('-jc')
-            jc = json.dumps(self.config)
-            docker_cmd.append(jc)
-        if self.unattended:
-            docker_cmd.append('--unattended')
-        if self.resume_id:
-            docker_cmd.extend(['--resume', self.resume_id])
-        # print(docker_cmd)
-        print(f'{W}Running container: {G}{self.container_image}{W}')
-        # Don't capture stdout/stdin - let Docker handle TTY directly
+    def build_run_container(self, runtime_name=None):
+        from container_runtime import detect_runtime
         try:
-            process = subprocess.run(docker_cmd)
+            runtime = detect_runtime(runtime_name)
+        except RuntimeError as exc:
+            print(f'{R}Error: {exc}{W}')
+            sys.exit(1)
+
+        # Build container arguments (after image name)
+        ctr_args = []
+        if self.agent_mode:
+            ctr_args.append('--agent')
+            if self.agent_name:
+                ctr_args.extend(['--agent-name', self.agent_name])
+            if self.exit_on_idle:
+                ctr_args.extend(['--exit-on-idle', str(self.exit_on_idle)])
+            if self.ws_url:
+                ctr_args.extend(['--ws-url', self.ws_url])
+            if self.debug:
+                ctr_args.append('--debug')
+        if self.options is not None:
+            ctr_args.append('-jo')
+            ctr_args.append(json.dumps(self.options))
+        if self.config is not None:
+            ctr_args.append('-jc')
+            ctr_args.append(json.dumps(self.config))
+        if self.unattended:
+            ctr_args.append('--unattended')
+        if self.resume_id:
+            ctr_args.extend(['--resume', self.resume_id])
+        if self.fail_on_severity:
+            ctr_args.extend(['--fail-on-severity', self.fail_on_severity])
+        if self.fail_on_count is not None:
+            ctr_args.extend(['--fail-on-count', str(self.fail_on_count)])
+        if self.sarif_output:
+            # SARIF path inside the container maps to /output/
+            sarif_path = f'/output/{self.sarif_output}' if not self.sarif_output.startswith('/') else self.sarif_output
+            ctr_args.extend(['--sarif', sarif_path])
+
+        cmd = runtime.build_run_cmd(
+            self.container_image,
+            rm=True,
+            interactive=True,
+            tty=True,
+            volumes=[(self.map_path, '/output/', '')],
+            container_args=ctr_args,
+        )
+
+        print(f'{W}Running container ({runtime.label}): {G}{self.container_image}{W}')
+        try:
+            process = subprocess.run(cmd)
             return process.returncode
         except KeyboardInterrupt:
             print(f'\n{W}Goodbye.{W}')
