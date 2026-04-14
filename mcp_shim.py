@@ -947,6 +947,190 @@ async def run_mcp_server(
         ),
     }
 
+    # -- Hive query tools (read-only, hit /hive-cli/* API) --------------------
+    _QUERY_TOOLS = {
+        "query_findings": types.Tool(
+            name="query_findings",
+            description=(
+                "Query vulnerability findings from Hive. Returns findings "
+                "discovered by previous scans including name, severity, CVSS, "
+                "description, CWE, and solution. Use this to check what has "
+                "already been found before running more tools, or to understand "
+                "the current security posture of a target. "
+                "Requires online mode (API key)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "severity": {
+                        "type": "string",
+                        "enum": ["critical", "high", "medium", "low", "info"],
+                        "description": "Filter by severity level",
+                    },
+                },
+                "required": [],
+            },
+        ),
+        "query_assets": types.Tool(
+            name="query_assets",
+            description=(
+                "Query discovered assets from Hive. Returns assets (URLs, IPs, "
+                "domains, hosts, ports, applications) found by previous scans. "
+                "Use this to understand the attack surface before choosing tools, "
+                "or to verify what infrastructure has been discovered. "
+                "Requires online mode (API key)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "type": {
+                        "type": "string",
+                        "enum": ["dns", "ip", "host", "port", "url", "site", "application", "metadata"],
+                        "description": "Filter by asset type",
+                    },
+                    "search": {
+                        "type": "string",
+                        "description": "Search term to filter by name, address, or URL",
+                    },
+                },
+                "required": [],
+            },
+        ),
+        "query_scans": types.Tool(
+            name="query_scans",
+            description=(
+                "Query scan history from Hive. Returns recent scans with their "
+                "tool name, status, asset/vulnerability counts, and AI summary. "
+                "Use this to see what tools have already been run against a "
+                "target to avoid duplication. "
+                "Requires online mode (API key)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "status": {
+                        "type": "string",
+                        "enum": ["running", "completed", "failed", "pending"],
+                        "description": "Filter by scan status",
+                    },
+                },
+                "required": [],
+            },
+        ),
+        "query_engagements": types.Tool(
+            name="query_engagements",
+            description=(
+                "Query engagements from Hive. Returns engagement names, scope, "
+                "date ranges, linked organizations, and campaigns. Use this to "
+                "find and select the right engagement before running tools. "
+                "Requires online mode (API key)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "status": {
+                        "type": "string",
+                        "enum": ["active", "completed", "planned"],
+                        "description": "Filter by engagement status",
+                    },
+                },
+                "required": [],
+            },
+        ),
+        "query_executions": types.Tool(
+            name="query_executions",
+            description=(
+                "Query scan executions from Hive. Returns execution IDs, status, "
+                "type (runbook/attackTree/aiScan), targets, scan counts, and "
+                "linked runbook/attack tree names. Use this to check execution "
+                "history and status. Requires online mode (API key)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "status": {
+                        "type": "string",
+                        "enum": ["pending", "running", "completed", "failed", "cancelled"],
+                        "description": "Filter by execution status",
+                    },
+                    "executionType": {
+                        "type": "string",
+                        "enum": ["runbook", "attackTree", "aiScan"],
+                        "description": "Filter by execution type",
+                    },
+                },
+                "required": [],
+            },
+        ),
+        "query_runbooks": types.Tool(
+            name="query_runbooks",
+            description=(
+                "Query available runbooks from Hive. Returns runbook names, "
+                "descriptions, and option counts. Use this to discover pre-built "
+                "scan workflows you can execute. "
+                "Requires online mode (API key)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "status": {
+                        "type": "string",
+                        "enum": ["active", "archived", "draft"],
+                        "description": "Filter by runbook status",
+                    },
+                },
+                "required": [],
+            },
+        ),
+        "query_attack_trees": types.Tool(
+            name="query_attack_trees",
+            description=(
+                "Query available attack trees from Hive. Returns attack tree "
+                "names, descriptions, and branch counts. Use this to discover "
+                "pre-built attack paths you can execute. "
+                "Requires online mode (API key)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "status": {
+                        "type": "string",
+                        "enum": ["active", "archived", "draft"],
+                        "description": "Filter by attack tree status",
+                    },
+                },
+                "required": [],
+            },
+        ),
+    }
+
+    # -- Adaptive tool selection -----------------------------------------------
+    _RECON_TOOLS = {
+        "suggest_next_tools": types.Tool(
+            name="suggest_next_tools",
+            description=(
+                "Analyze current scan results from Hive and suggest the best "
+                "next security tools to run. Queries existing findings and "
+                "assets, then recommends tools based on the discovered attack "
+                "surface, technologies, and gaps in coverage.\n\n"
+                "Call this after initial discovery (httpx, subfinder, whatweb) "
+                "to get intelligent recommendations for follow-up tools. "
+                "Returns tool names, reasoning, and priority. "
+                "Requires online mode (API key)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "target": {
+                        "type": "string",
+                        "description": "Primary target (domain, URL, or IP) to focus recommendations on",
+                    },
+                },
+                "required": [],
+            },
+        ),
+    }
+
     # -- Admin tool handlers --------------------------------------------------
     def _handle_submit_data(parser_name: str, arguments: dict) -> dict:
         """Submit findings or assets to the Hive receiver endpoint."""
@@ -993,7 +1177,7 @@ async def run_mcp_server(
             eng_name = engagements[0] if isinstance(engagements, list) else engagements
             payload["engagement"] = {"name": eng_name}
 
-        receiver_url = f"{base_url}/valis/"
+        receiver_url = f"{base_url}/valis/receiver"
         req_body = json.dumps(payload).encode("utf-8")
 
         logger.info(
@@ -1009,7 +1193,7 @@ async def run_mcp_server(
                     "Content-Type": "application/json",
                     "x-api-key": api_key,
                 },
-                method="POST",
+                method="PUT",
             )
             with urllib.request.urlopen(req, timeout=30) as resp:
                 resp_body = resp.read().decode("utf-8")
@@ -1132,6 +1316,239 @@ async def run_mcp_server(
             },
         }
 
+    # -- Hive API query helper ------------------------------------------------
+    def _hive_api_get(path: str, query_params: Optional[dict] = None) -> dict:
+        """Make a GET request to the Hive CLI API.
+
+        Args:
+            path: API path (e.g. '/hive-cli/assets')
+            query_params: Optional query string parameters
+
+        Returns:
+            Dict with success status and data or error
+        """
+        if config is None or config.get("configuration", {}).get("online") != "enabled":
+            return {
+                "success": False,
+                "error": (
+                    "Online mode required. Start the MCP server with an API key: "
+                    "aphids-cli --mcp -k YOUR_API_KEY"
+                ),
+            }
+
+        hive_api_key = config.get("authorization", {}).get("apiKey")
+        base_url = config.get("baseUrl", "")
+        if not hive_api_key or not base_url:
+            return {
+                "success": False,
+                "error": "API key and base URL required for Hive queries",
+            }
+
+        import urllib.request
+        import urllib.error
+        import urllib.parse
+
+        url = f"{base_url}{path}"
+        if query_params:
+            # Filter out None values
+            clean_params = {k: v for k, v in query_params.items() if v is not None}
+            if clean_params:
+                url += "?" + urllib.parse.urlencode(clean_params)
+
+        logger.info(f"Hive API GET: {url}")
+
+        try:
+            req = urllib.request.Request(
+                url,
+                headers={
+                    "Content-Type": "application/json",
+                    "x-api-key": hive_api_key,
+                },
+                method="GET",
+            )
+            with urllib.request.urlopen(req, timeout=25) as resp:
+                resp_body = resp.read().decode("utf-8")
+                data = json.loads(resp_body)
+                return {"success": True, "data": data}
+
+        except urllib.error.HTTPError as he:
+            err_body = he.read().decode("utf-8", errors="replace")[:500]
+            logger.error(f"Hive API error {he.code}: {err_body}")
+            return {"success": False, "error": f"Hive API error ({he.code}): {err_body}"}
+        except json.JSONDecodeError:
+            return {"success": True, "data": resp_body[:2000]}
+        except Exception as exc:
+            logger.error(f"Hive API request failed: {exc}")
+            return {"success": False, "error": f"Request failed: {str(exc)}"}
+
+    def _handle_query(endpoint: str, arguments: dict) -> dict:
+        """Generic handler for Hive query tools."""
+        query_params = {k: v for k, v in (arguments or {}).items() if v is not None}
+        return _hive_api_get(f"/hive-cli/{endpoint}", query_params or None)
+
+    # -- Adaptive tool selection handler --------------------------------------
+    # Maps technologies/patterns to recommended tools
+    _TECH_TOOL_MAP = {
+        # CMS / Frameworks
+        "wordpress": {"tools": ["run_wpscan"], "reason": "WordPress detected — WPScan checks plugins, themes, and core vulns"},
+        "wp-": {"tools": ["run_wpscan"], "reason": "WordPress indicators found"},
+        "joomla": {"tools": ["run_nikto"], "reason": "Joomla detected — Nikto has Joomla-specific checks"},
+        "drupal": {"tools": ["run_nikto"], "reason": "Drupal detected — Nikto checks for known Drupal vulns"},
+        # Web servers
+        "apache": {"tools": ["run_nikto", "run_nuclei"], "reason": "Apache detected — check for misconfigs and known CVEs"},
+        "nginx": {"tools": ["run_nikto", "run_nuclei"], "reason": "Nginx detected — check for misconfigs and known CVEs"},
+        "iis": {"tools": ["run_nikto", "run_nuclei"], "reason": "IIS detected — check for Windows-specific vulns"},
+        # Languages / Frameworks
+        "php": {"tools": ["run_nuclei", "run_nikto"], "reason": "PHP detected — common injection targets"},
+        "asp.net": {"tools": ["run_nuclei", "run_nikto"], "reason": "ASP.NET detected — check for .NET-specific vulns"},
+        "java": {"tools": ["run_nuclei"], "reason": "Java stack detected — check for deserialization, Log4j, etc."},
+        "node": {"tools": ["run_nuclei"], "reason": "Node.js detected — check for prototype pollution, SSRF"},
+        "react": {"tools": ["run_nuclei"], "reason": "React SPA detected — check API endpoints for vulns"},
+        # SSL/TLS
+        "ssl": {"tools": ["run_testssl"], "reason": "HTTPS service found — test SSL/TLS configuration"},
+        "https": {"tools": ["run_testssl"], "reason": "HTTPS detected — check certificate and cipher config"},
+        # Services
+        "ssh": {"tools": ["run_nmap"], "reason": "SSH service detected — check version and auth config"},
+        "ftp": {"tools": ["run_nmap", "run_hydra"], "reason": "FTP service detected — check for anonymous access"},
+        "mysql": {"tools": ["run_nmap"], "reason": "MySQL exposed — check for default creds and version vulns"},
+        "smtp": {"tools": ["run_nmap"], "reason": "SMTP service detected — check for open relay"},
+        # Patterns from findings
+        "sql injection": {"tools": ["run_sqlmap"], "reason": "SQL injection finding exists — sqlmap for deeper exploitation"},
+        "sqli": {"tools": ["run_sqlmap"], "reason": "SQLi indicators — sqlmap for confirmation and exploitation"},
+        "xss": {"tools": ["run_dalfox"], "reason": "XSS finding exists — Dalfox for advanced XSS testing"},
+        "cross-site scripting": {"tools": ["run_dalfox"], "reason": "XSS detected — Dalfox for payload generation"},
+        "directory listing": {"tools": ["run_feroxbuster"], "reason": "Directory listing found — Feroxbuster for full enumeration"},
+        "cors": {"tools": ["run_corscanner"], "reason": "CORS issue detected — CORScanner for comprehensive testing"},
+    }
+
+    # Tools considered "discovery" (usually run first)
+    _DISCOVERY_TOOLS = {"run_httpx", "run_subfinder", "run_whatweb", "run_wafw00f",
+                        "run_dnsx", "run_katana", "run_sublist3r"}
+
+    # Tools that should generally be run on web targets
+    _WEB_BASELINE = [
+        {"tool": "run_nuclei", "reason": "Comprehensive vulnerability scanner — should always run on web targets", "priority": "high"},
+        {"tool": "run_nikto", "reason": "Web server scanner for misconfigurations and known vulns", "priority": "medium"},
+    ]
+
+    def _handle_suggest_next_tools(arguments: dict) -> dict:
+        """Analyze Hive data and recommend next tools to run."""
+        target = (arguments or {}).get("target", "")
+
+        # Fetch current state from Hive
+        assets_result = _hive_api_get("/hive-cli/assets", {"search": target} if target else None)
+        findings_result = _hive_api_get("/hive-cli/findings")
+        scans_result = _hive_api_get("/hive-cli/scans", {"status": "completed"})
+
+        if not assets_result.get("success"):
+            return assets_result  # Pass through error
+
+        assets = assets_result.get("data", [])
+        findings = findings_result.get("data", []) if findings_result.get("success") else []
+        scans = scans_result.get("data", []) if scans_result.get("success") else []
+
+        # What tools have already been run?
+        tools_already_run = set()
+        for scan in scans:
+            scan_name = (scan.get("name") or "").lower()
+            scan_type = (scan.get("scanType") or "").lower()
+            # Try to extract tool name from scan name/type
+            for t in tool_map:
+                bare = t.replace("run_", "")
+                if bare in scan_name or bare in scan_type:
+                    tools_already_run.add(t)
+
+        # Collect all text to match against tech patterns
+        tech_signals = set()
+        for asset in assets:
+            for field in ["name", "address", "fullUrl"]:
+                val = (asset.get(field) or "").lower()
+                if val:
+                    tech_signals.add(val)
+            for label in (asset.get("type") or []):
+                tech_signals.add(str(label).lower())
+
+        for finding in findings:
+            for field in ["name", "description", "solution"]:
+                val = (finding.get(field) or "").lower()
+                if val:
+                    tech_signals.add(val)
+
+        # Match tech signals against tool recommendations
+        recommendations = []
+        recommended_tools = set()
+        all_signals_text = " ".join(tech_signals)
+
+        for pattern, rec in _TECH_TOOL_MAP.items():
+            if pattern in all_signals_text:
+                for tool_name in rec["tools"]:
+                    if tool_name not in tools_already_run and tool_name not in recommended_tools:
+                        if tool_name in tool_map:  # Only recommend tools we actually have
+                            recommendations.append({
+                                "tool": tool_name,
+                                "reason": rec["reason"],
+                                "priority": "high",
+                                "trigger": pattern,
+                            })
+                            recommended_tools.add(tool_name)
+
+        # Add web baseline tools if we have web assets
+        has_web_assets = any(
+            any(label in ["url", "site"] for label in (a.get("type") or []))
+            or (a.get("fullUrl") or "").startswith("http")
+            for a in assets
+        )
+
+        if has_web_assets:
+            for baseline in _WEB_BASELINE:
+                tool_name = baseline["tool"]
+                if tool_name not in tools_already_run and tool_name not in recommended_tools:
+                    if tool_name in tool_map:
+                        recommendations.append({
+                            "tool": tool_name,
+                            "reason": baseline["reason"],
+                            "priority": baseline["priority"],
+                        })
+                        recommended_tools.add(tool_name)
+
+        # Check if discovery tools have been run
+        discovery_run = tools_already_run & _DISCOVERY_TOOLS
+        if not discovery_run:
+            # No discovery yet — recommend starting there
+            discovery_recs = [
+                {"tool": "run_httpx", "reason": "No discovery scans found — start with HTTP probing to identify live web services", "priority": "high"},
+                {"tool": "run_subfinder", "reason": "Subdomain enumeration to map the full attack surface", "priority": "high"},
+                {"tool": "run_whatweb", "reason": "Technology fingerprinting to identify frameworks and versions", "priority": "high"},
+            ]
+            for rec in discovery_recs:
+                if rec["tool"] in tool_map and rec["tool"] not in recommended_tools:
+                    recommendations.insert(0, rec)
+                    recommended_tools.add(rec["tool"])
+
+        # Sort: high priority first
+        priority_order = {"high": 0, "medium": 1, "low": 2}
+        recommendations.sort(key=lambda r: priority_order.get(r.get("priority", "low"), 2))
+
+        return {
+            "success": True,
+            "recommendations": recommendations,
+            "context": {
+                "assets_found": len(assets),
+                "findings_found": len(findings),
+                "scans_completed": len(scans),
+                "tools_already_run": sorted(tools_already_run),
+                "has_web_assets": has_web_assets,
+            },
+            "message": (
+                f"Based on {len(assets)} assets and {len(findings)} findings, "
+                f"recommending {len(recommendations)} tools. "
+                f"{len(tools_already_run)} tools have already been run."
+            ) if recommendations else (
+                "No specific recommendations — either run discovery tools first "
+                "(httpx, subfinder, whatweb) or all relevant tools have been run."
+            ),
+        }
+
     # Build MCP server
     server = Server("aphids-security-tools")
 
@@ -1139,6 +1556,8 @@ async def run_mcp_server(
     async def handle_list_tools() -> list[types.Tool]:
         admin = list(_ADMIN_TOOLS.values())
         admin.extend(_SUBMIT_TOOLS.values())
+        admin.extend(_QUERY_TOOLS.values())
+        admin.extend(_RECON_TOOLS.values())
         admin.extend(
             types.Tool(
                 name=t["name"],
@@ -1180,6 +1599,36 @@ async def run_mcp_server(
         if name == "submit_assets":
             result = await asyncio.to_thread(
                 _handle_submit_data, "asset_ingest", arguments
+            )
+            return [types.TextContent(
+                type="text",
+                text=json.dumps(result, indent=2, default=str),
+            )]
+
+        # Hive query tools — GET from /hive-cli/* API, no Docker dispatch
+        _QUERY_ENDPOINTS = {
+            "query_findings": "findings",
+            "query_assets": "assets",
+            "query_scans": "scans",
+            "query_engagements": "engagements",
+            "query_executions": "executions",
+            "query_runbooks": "runbooks",
+            "query_attack_trees": "attack-trees",
+        }
+        if name in _QUERY_ENDPOINTS:
+            endpoint = _QUERY_ENDPOINTS[name]
+            result = await asyncio.to_thread(
+                _handle_query, endpoint, arguments
+            )
+            return [types.TextContent(
+                type="text",
+                text=json.dumps(result, indent=2, default=str),
+            )]
+
+        # Adaptive tool selection — analyze Hive data and recommend tools
+        if name == "suggest_next_tools":
+            result = await asyncio.to_thread(
+                _handle_suggest_next_tools, arguments
             )
             return [types.TextContent(
                 type="text",
