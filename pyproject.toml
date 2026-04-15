@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aphids-cli"
-version = "1.5.1"
+version = "1.5.2"
 description = "CLI interface for the Aphids security toolkit. Orchestrates penetration testing tools via containerized execution."
 readme = "README.md"
 license = {text = "GPL-3.0-or-later"}

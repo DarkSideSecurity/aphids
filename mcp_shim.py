@@ -64,6 +64,12 @@ TOOL_REGISTRY_CACHE_TTL = 86400  # 24 hours
 CACHE_DIR = os.path.join(str(Path.home()), ".aphids", "cache")
 MAX_OUTPUT_SIZE = 500_000    # ~500KB cap on raw output returned to LLM
 
+# Strict whitelist for output filenames returned by the container.
+# Defense in depth — basename() already strips directories, but this
+# additionally rejects: hidden files, control chars, null bytes,
+# encoded path traversal, and anything that isn't a sane filename.
+_SAFE_OUTPUT_FILENAME_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]{0,254}\Z")
+
 # Tools that require filesystem access to source code
 WORKSPACE_TOOLS = {"run_semgrep", "run_gitleaks", "run_trufflehog"}
 
@@ -538,12 +544,32 @@ def dispatch_tool(
         # try to read it from the mounted output dir
         if result.get("success") and not result.get("raw_output"):
             output_file = result.get("output_file")
+            host_output = None
             if output_file:
                 # The output_file path is inside the container (/output/...),
-                # map it to the host output_dir
-                basename = os.path.basename(output_file)
-                host_output = os.path.join(output_dir, basename)
-                if os.path.isfile(host_output):
+                # map it to the host output_dir. Defense in depth: the path
+                # came from inside the container so treat it as untrusted.
+                # basename strips directories; the regex whitelist
+                # additionally rejects null bytes, encoded traversal,
+                # hidden files, and control characters.
+                basename = os.path.basename(output_file or "")
+                if not basename or not _SAFE_OUTPUT_FILENAME_RE.match(basename):
+                    logger.warning(
+                        f"[{run_id}] Rejected suspicious output_file: {output_file!r}"
+                    )
+                else:
+                    candidate = os.path.join(output_dir, basename)
+                    real_candidate = os.path.realpath(candidate)
+                    real_output_dir = os.path.realpath(output_dir)
+                    # Ensure the resolved path is still under output_dir
+                    if real_candidate.startswith(real_output_dir + os.sep) or real_candidate == real_output_dir:
+                        host_output = candidate
+                    else:
+                        logger.warning(
+                            f"[{run_id}] output_file resolved outside output_dir: "
+                            f"{real_candidate} not under {real_output_dir}"
+                        )
+            if host_output and os.path.isfile(host_output):
                     try:
                         file_size = os.path.getsize(host_output)
                         with open(host_output, "r", errors="replace") as f:
@@ -1819,10 +1845,52 @@ async def run_mcp_server(
 
         arguments = arguments or {}
 
-        # Determine timeout
+        # Determine timeout. Validate up front so the agent gets an
+        # actionable error instead of silent fallback to the default.
         tool_timeout = DEFAULT_TOOL_TIMEOUT
-        if isinstance(arguments.get("timeout"), int) and arguments["timeout"] > 0:
-            tool_timeout = min(arguments["timeout"], MAX_TOOL_TIMEOUT)
+        raw_timeout = arguments.get("timeout")
+        if raw_timeout is not None:
+            try:
+                parsed_to = int(raw_timeout)
+            except (TypeError, ValueError):
+                return [types.TextContent(
+                    type="text",
+                    text=json.dumps({
+                        "success": False,
+                        "error": (
+                            f"timeout must be a positive integer (seconds), got "
+                            f"{type(raw_timeout).__name__}={raw_timeout!r}"
+                        ),
+                        "mcp_version": "1.0",
+                    }),
+                )]
+            if parsed_to <= 0:
+                return [types.TextContent(
+                    type="text",
+                    text=json.dumps({
+                        "success": False,
+                        "error": (
+                            f"timeout must be > 0, got {parsed_to}. Use a "
+                            f"positive integer up to {MAX_TOOL_TIMEOUT}, or "
+                            "omit timeout to use the default."
+                        ),
+                        "mcp_version": "1.0",
+                    }),
+                )]
+            if parsed_to > MAX_TOOL_TIMEOUT:
+                return [types.TextContent(
+                    type="text",
+                    text=json.dumps({
+                        "success": False,
+                        "error": (
+                            f"timeout={parsed_to} exceeds maximum of "
+                            f"{MAX_TOOL_TIMEOUT}s. Use a smaller value or "
+                            "split the work into multiple tool calls."
+                        ),
+                        "mcp_version": "1.0",
+                    }),
+                )]
+            tool_timeout = parsed_to
 
         # Dispatch to container in a background thread
         logger.info(f"Tool call: {name} | args: {list(arguments.keys())}")
