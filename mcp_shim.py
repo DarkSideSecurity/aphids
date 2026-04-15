@@ -938,6 +938,36 @@ async def run_mcp_server(
                                 },
                             },
                             "required": ["type"],
+                            "allOf": [
+                                {
+                                    "if": {"properties": {"type": {"const": "url"}}},
+                                    "then": {"required": ["type", "url"]},
+                                },
+                                {
+                                    "if": {"properties": {"type": {"const": "ip"}}},
+                                    "then": {"required": ["type", "address"]},
+                                },
+                                {
+                                    "if": {"properties": {"type": {"const": "dns"}}},
+                                    "then": {"required": ["type", "name"]},
+                                },
+                                {
+                                    "if": {"properties": {"type": {"const": "port"}}},
+                                    "then": {"required": ["type", "port", "host"]},
+                                },
+                                {
+                                    "if": {"properties": {"type": {"const": "site"}}},
+                                    "then": {"required": ["type", "url"]},
+                                },
+                                {
+                                    "if": {"properties": {"type": {"const": "host"}}},
+                                    "then": {"required": ["type", "name"]},
+                                },
+                                {
+                                    "if": {"properties": {"type": {"const": "application"}}},
+                                    "then": {"required": ["type", "name", "host"]},
+                                },
+                            ],
                         },
                         "description": "Array of assets to submit",
                     },
@@ -946,6 +976,48 @@ async def run_mcp_server(
             },
         ),
     }
+
+    # Per-type required field map for runtime validation (MCP clients may
+    # not honor allOf conditional schemas, so we defend in code too).
+    _ASSET_REQUIRED_FIELDS = {
+        "url": ["url"],
+        "ip": ["address"],
+        "dns": ["name"],
+        "port": ["port", "host"],
+        "site": ["url"],
+        "host": ["name"],
+        "application": ["name", "host"],
+    }
+
+    def _validate_assets(assets):
+        """Validate asset array shape before POST to Hive.
+
+        Returns (ok, error_string). Validates:
+          - assets is a list
+          - each item has a valid type
+          - each item has the required fields for its type
+        """
+        if not isinstance(assets, list):
+            return False, "assets must be an array"
+        if not assets:
+            return False, "assets array is empty — nothing to submit"
+        valid_types = set(_ASSET_REQUIRED_FIELDS.keys())
+        for i, asset in enumerate(assets):
+            if not isinstance(asset, dict):
+                return False, f"assets[{i}] is not an object"
+            atype = asset.get("type")
+            if atype not in valid_types:
+                return False, (
+                    f"assets[{i}].type = {atype!r} is not valid. "
+                    f"Must be one of: {sorted(valid_types)}"
+                )
+            missing = [f for f in _ASSET_REQUIRED_FIELDS[atype] if not asset.get(f)]
+            if missing:
+                return False, (
+                    f"assets[{i}] (type={atype!r}) missing required fields: "
+                    f"{missing}. See tool description for per-type requirements."
+                )
+        return True, None
 
     # -- Hive query tools (read-only, hit /hive-cli/* API) --------------------
     _QUERY_TOOLS = {
@@ -1150,8 +1222,24 @@ async def run_mcp_server(
         if not api_key or not base_url:
             return {
                 "success": False,
-                "error": "API key and base URL required for data submission",
+                "error": (
+                    "API key and base URL required for data submission. "
+                    "Restart the MCP server with: aphids-cli --mcp -k YOUR_API_KEY"
+                ),
             }
+
+        # Runtime validation of assets before POST — saves a round-trip
+        # to the backend and returns actionable errors to the agent.
+        # (MCP clients may not honor the allOf conditional schema, so
+        # we enforce the per-type required fields in code.)
+        if parser_name == "asset_ingest":
+            assets = arguments.get("assets") if isinstance(arguments, dict) else arguments
+            ok, err = _validate_assets(assets)
+            if not ok:
+                return {
+                    "success": False,
+                    "error": f"Asset validation failed: {err}",
+                }
 
         import urllib.request
         import urllib.error
@@ -1317,22 +1405,31 @@ async def run_mcp_server(
         }
 
     # -- Hive API query helper ------------------------------------------------
+
+    # Backend /hive-cli/* endpoints cap results at 100 (hardcoded LIMIT
+    # in the Neo4j query). Surfacing this so the agent knows when it's
+    # hitting the ceiling vs when there are fewer results than the cap.
+    HIVE_CLI_RESULT_CAP = 100
+
     def _hive_api_get(path: str, query_params: Optional[dict] = None) -> dict:
         """Make a GET request to the Hive CLI API.
 
-        Args:
-            path: API path (e.g. '/hive-cli/assets')
-            query_params: Optional query string parameters
-
         Returns:
-            Dict with success status and data or error
+            {
+              success: bool,
+              data: list | dict,
+              count: int,                 # number of items returned
+              result_cap: int,            # backend cap (100)
+              possibly_truncated: bool,   # count == cap — may be more
+              error: str (on failure),
+            }
         """
         if config is None or config.get("configuration", {}).get("online") != "enabled":
             return {
                 "success": False,
                 "error": (
-                    "Online mode required. Start the MCP server with an API key: "
-                    "aphids-cli --mcp -k YOUR_API_KEY"
+                    "This tool queries Hive and requires online mode. "
+                    "Restart the MCP server with: aphids-cli --mcp -k YOUR_API_KEY"
                 ),
             }
 
@@ -1341,7 +1438,10 @@ async def run_mcp_server(
         if not hive_api_key or not base_url:
             return {
                 "success": False,
-                "error": "API key and base URL required for Hive queries",
+                "error": (
+                    "API key and base URL required for Hive queries. "
+                    "Restart with: aphids-cli --mcp -k YOUR_API_KEY"
+                ),
             }
 
         import urllib.request
@@ -1357,6 +1457,7 @@ async def run_mcp_server(
 
         logger.info(f"Hive API GET: {url}")
 
+        resp_body = ""
         try:
             req = urllib.request.Request(
                 url,
@@ -1369,17 +1470,60 @@ async def run_mcp_server(
             with urllib.request.urlopen(req, timeout=25) as resp:
                 resp_body = resp.read().decode("utf-8")
                 data = json.loads(resp_body)
-                return {"success": True, "data": data}
+
+            # Surface pagination/truncation signals so the agent knows
+            # whether more results may exist beyond the returned set.
+            count = len(data) if isinstance(data, list) else (1 if data else 0)
+            possibly_truncated = (
+                isinstance(data, list) and count >= HIVE_CLI_RESULT_CAP
+            )
+            response = {
+                "success": True,
+                "data": data,
+                "count": count,
+                "result_cap": HIVE_CLI_RESULT_CAP,
+                "possibly_truncated": possibly_truncated,
+            }
+            if possibly_truncated:
+                response["truncation_note"] = (
+                    f"Returned {count} items — backend caps results at "
+                    f"{HIVE_CLI_RESULT_CAP}. More may exist. Use the "
+                    "'search' or 'type' filters to narrow the query."
+                )
+            return response
 
         except urllib.error.HTTPError as he:
             err_body = he.read().decode("utf-8", errors="replace")[:500]
             logger.error(f"Hive API error {he.code}: {err_body}")
-            return {"success": False, "error": f"Hive API error ({he.code}): {err_body}"}
+            hint = ""
+            if he.code == 401:
+                hint = " Your API key may be invalid or expired."
+            elif he.code == 403:
+                hint = " Your license may not have access to this resource."
+            elif he.code == 404:
+                hint = " The endpoint may not exist on this Hive version."
+            elif he.code >= 500:
+                hint = " This is a backend error — try again in a moment."
+            return {
+                "success": False,
+                "error": f"Hive API error ({he.code}): {err_body}.{hint}",
+                "status_code": he.code,
+            }
         except json.JSONDecodeError:
-            return {"success": True, "data": resp_body[:2000]}
+            # Non-JSON response — surface explicitly so the agent
+            # knows it's looking at a raw/truncated payload.
+            return {
+                "success": False,
+                "error": "Backend returned non-JSON response",
+                "raw_sample": resp_body[:500],
+                "raw_length": len(resp_body),
+            }
         except Exception as exc:
             logger.error(f"Hive API request failed: {exc}")
-            return {"success": False, "error": f"Request failed: {str(exc)}"}
+            return {
+                "success": False,
+                "error": f"Request failed: {str(exc)}",
+            }
 
     def _handle_query(endpoint: str, arguments: dict) -> dict:
         """Generic handler for Hive query tools."""
@@ -1432,16 +1576,36 @@ async def run_mcp_server(
     ]
 
     def _handle_suggest_next_tools(arguments: dict) -> dict:
-        """Analyze Hive data and recommend next tools to run."""
+        """Analyze Hive data and recommend next tools to run.
+
+        Fetches assets/findings/scans in parallel (3 concurrent HTTP
+        GETs) to keep latency under ~100ms instead of the ~300ms of
+        sequential calls. Each request has its own 25s timeout from
+        _hive_api_get.
+        """
+        import concurrent.futures
+
         target = (arguments or {}).get("target", "")
 
-        # Fetch current state from Hive
-        assets_result = _hive_api_get("/hive-cli/assets", {"search": target} if target else None)
-        findings_result = _hive_api_get("/hive-cli/findings")
-        scans_result = _hive_api_get("/hive-cli/scans", {"status": "completed"})
+        # Fire all 3 queries concurrently. _hive_api_get is sync
+        # urllib code, so a thread pool is the right fit (the I/O is
+        # released during urlopen, so threads actually run in parallel).
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+            assets_fut = pool.submit(
+                _hive_api_get,
+                "/hive-cli/assets",
+                {"search": target} if target else None,
+            )
+            findings_fut = pool.submit(_hive_api_get, "/hive-cli/findings")
+            scans_fut = pool.submit(
+                _hive_api_get, "/hive-cli/scans", {"status": "completed"}
+            )
+            assets_result = assets_fut.result()
+            findings_result = findings_fut.result()
+            scans_result = scans_fut.result()
 
         if not assets_result.get("success"):
-            return assets_result  # Pass through error
+            return assets_result  # Pass through error (likely auth/online)
 
         assets = assets_result.get("data", [])
         findings = findings_result.get("data", []) if findings_result.get("success") else []
